@@ -85,5 +85,95 @@ public class Global
 	public static int	url_scope;
 	
 	
+	/* Flags for http_response warnings: */
+
+	public static int WARN_NONE       =0;       /* No warnings                  */
+	public static int WARN_PARTIAL    =1;       /* Incomplete read              */
+	public static int WARN_TRAIL      =2;       /* Trailing request garbage     */
+	public static int WARN_CFL_HDR    =4;       /* Conflicting headers          */
+	
+	
+	public static PivotDesc root_pivot;
+	
+	
+	
+	
+	
+	
+	/* Testing pivot points - used to organize the scan: */
+
+	/* - Pivot types: */
+
+	public static final int PIVOT_NONE              =0;               /* Invalid                   */
+	public static final int PIVOT_ROOT              =1;               /* Root pivot                */
+
+	public static final int PIVOT_SERV              =2;              /* Top-level host pivot      */
+	public static final int PIVOT_DIR               =4;              /* Directory pivot           */
+	public static final int PIVOT_FILE             = 8;              /* File pivot                */
+	public static final int PIVOT_PATHINFO          =16;              /* PATH_INFO script          */
+
+	public static final int PIVOT_UNKNOWN           =32;              /* (Currently) unknown type  */
+
+	public static final int PIVOT_PARAM             =64;              /* Parameter fuzzing pivot   */
+	public static final int PIVOT_VALUE             =128;             /* Parameter value pivot     */
+
+	/* - Pivot states (initialized to PENDING or FETCH by database.c, then
+	     advanced by crawler.c): */
+
+	public static final int PSTATE_NONE            = 0;               /* Invalid                   */
+	public static final int PSTATE_PENDING          =1;               /* Pending parent tests      */
+
+	public static final int PSTATE_FETCH            =10;              /* Initial data fetch        */
+
+	public static final int PSTATE_TYPE_CHECK       =20;              /* Type check (unknown only) */
+	public static final int PSTATE_404_CHECK        =22;              /* 404 check (dir only)      */
+	public static final int PSTATE_PARENT_CHECK     =24;              /* Parent check (dir only)   */
+	public static final int PSTATE_IPS_CHECK        =26;              /* IPS filtering check       */
+
+	/* For directories only (injecting children nodes): */
+
+	public static final int PSTATE_CHILD_INJECT     =50;              /* Common security attacks   */
+	public static final int PSTATE_CHILD_DICT       =55;              /* Dictionary brute-force    */
+
+	/* For parametric nodes only (replacing parameter value): */
+
+	public static final int PSTATE_PAR_CHECK        =60;              /* Parameter works at all?   */
+	public static final int PSTATE_PAR_INJECT       =65;              /* Common security attacks   */
+	public static final int PSTATE_PAR_NUMBER       =70 ;             /* Numeric ID traversal      */
+	public static final int PSTATE_PAR_DICT         =75;              /* Dictionary brute-force    */
+	public static final int PSTATE_PAR_TRYLIST      =99 ;             /* 'Try list' fetches        */
+
+	public static final int PSTATE_DONE             =100;             /* Analysis done             */
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
 	
 }

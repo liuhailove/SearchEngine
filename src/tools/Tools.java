@@ -135,11 +135,22 @@ public class Tools
 		return  new String(d);
 		   
 	}
+	public static boolean casePrefix(String src,String com)
+	{
+		String s=src.toLowerCase();
+		String c=com.toLowerCase();
+		return s.startsWith(c);
+	}
 	public static void main(String[] args)
 	{
-		String str="Linux was first developed for 386/486-based pcs.";
-		System.out.println(strCspn(str,"/-"));
-		
+		//String str="Linux was first developed for 386/486-based pcs.";
+		//System.out.println(strCspn(str,"/-"));
+		String line="Content-length:";
+		String pre="Content-length:";
+		//System.out.println(Integer.parseInt(line.substring("Content-length:".length())));
+		char a=' ';
+		System.out.println(a=='\0');
+		System.out.println(Character.isWhitespace(a));
 		
 	}
 	

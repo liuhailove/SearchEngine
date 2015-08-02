@@ -5,7 +5,7 @@ public class HttpResponse
 	private int state;			/* HTTP convo state (STATE_*)   */
 	private int code;			/* HTTP response code           */
 	private String msg;			/* HTTP response message        */
-	private long warn;			 /* Warning flags                */
+	private int warn;			 /* Warning flags                */
 	private boolean cookies_set;/* Sets cookies?                */
 	private ParamArray hdr;		/* Server header, cookie list   */
 	private long pay_len;		/* Response payload length      */
@@ -51,11 +51,11 @@ public class HttpResponse
 	{
 		this.msg = msg;
 	}
-	public long getWarn()
+	public int getWarn()
 	{
 		return warn;
 	}
-	public void setWarn(long warn)
+	public void setWarn(int warn)
 	{
 		this.warn = warn;
 	}

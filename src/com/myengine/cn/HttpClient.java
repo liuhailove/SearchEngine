@@ -4,12 +4,7 @@ import static tools.Common.newXssTag;
 import static tools.Common.registerXssTag;
 import static tools.Common.setValue;
 import static tools.Tools.DEBUG;
-import static tools.Tools.FATAL;
-import static tools.Tools.getFixedLenghtStr;
-import static tools.Tools.strChr;
-import static tools.Tools.strCspn;
-import static tools.Tools.strPos;
-import static tools.Tools.strSpn;
+import static tools.Tools.*;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -1041,13 +1036,190 @@ public class HttpClient
 		}
 		/* First, let's do a superficial request completeness check. Be
 	     prepared for a premature end at any point. */
-		String line=read_buf.pop();
-		
+		cur_line=read_buf.pop();/* HTTP/1.x xxx ... */
+		if(null==cur_line)
+			return more?1:2;
+		if(cur_line.length()<7&&more)
+			return 1;
+		if(cur_line.startsWith("HTTP/1.")==false)
+			return 2;
+		/* Scan headers for Content-Length, Transfer-Encoding, etc. */
+		while(true)
+		{
+			cur_line=read_buf.pop();/* Next header or empty line. */
+			/* If headers end prematurely, and more data might arrive, ask for
+		       it; otherwise, just assume end of headers and continue. */
+			if(null==cur_line)
+			{
+				if(more)
+					return 1;
+				res.setWarn(res.getWarn()|Global.WARN_PARTIAL);
+				break;
+			}
+			/* Empty line indicates the beginning of a payload. */
+			if(Character.isWhitespace(cur_line.charAt(0)))
+				break;
+			if(casePrefix(cur_line,"Content-Length:"))
+			{
+		      /* The value in Content-Length header would be useful for seeing if we
+		         have all the requested data already. Reject invalid values to avoid
+		         integer overflows, etc, though. */
+				if(cur_line.length()>"Content-Length:".length())
+				{
+					pay_len=Integer.parseInt(cur_line.substring("Content-Length:".length()));
+					if(pay_len<0||pay_len > 1000000000 /* 1 GB */)
+						return 2;
+				}
+				else
+					pay_len=-1;
+				
+			}
+			else if(casePrefix(cur_line,"Transfer-Encoding:"))
+			{
+			      /* Transfer-Encoding: chunked must be accounted for to properly
+		         determine if we received all the data when Content-Length not found. */
+				String x=cur_line.substring("Transfer-Encoding:".length());
+				while(Character.isWhitespace(x.charAt(0)))
+					x=x.substring(1);
+				if(x.equalsIgnoreCase("chunked"))
+					chunked=true;
+				
+			}
+			else if(casePrefix(cur_line,"Content-Encoding:"))
+			{
+				/* Content-Encoding is good to know, too. */
+				String x=cur_line.substring("Content-Encoding:".length());
+				while(Character.isWhitespace(x.charAt(0)))
+					x=x.substring(1);
+				if(x.equalsIgnoreCase("deflate")||x.equalsIgnoreCase("gzip"))
+				{
+					compressed=true;
+				}
+			}
+			else if(casePrefix(cur_line, "Connection:"))
+			{
+				String x=cur_line.substring("Connection:".length());
+				while(Character.isWhitespace(cur_line.charAt(0)))
+					x=x.substring(1);
+				if(x.equalsIgnoreCase("close"))
+					must_close=true;
+			}
+		}
+		/* We are now at the beginning of the payload. Firstly, how about decoding
+	     'chunked' to see if we received a complete 0-byte terminator chunk
+	     already? */
+		if(chunked)
+		{
+			while(true)
+			{
+				int chunk_len;
+				cur_line=read_buf.pop();/* Should be chunk size, hex. */
+				if(null==cur_line)
+				{
+					if(more)
+						return 1;
+					res.setWarn(res.getWarn()|Global.WARN_PARTIAL);
+					break;
+				}
+				chunk_len=Integer.parseInt(cur_line);
+				if(chunk_len>1000000000||total_chunk>1000000000/* 1 GB */)
+				{
+					return 2;
+				}
+			    /* See if we actually enough buffer to skip the chunk. Bail out if
+		         not and more data might be coming; otherwise, adjust chunk size
+		         accordingly. */
+				if(cur_data_off+chunk_len>data_len)
+				{
+					if(more)
+						return 1;
+					chunk_len=data_len-cur_data_off;
+					total_chunk+=chunk_len;
+					res.setWarn(res.getWarn()|Global.WARN_PARTIAL);
+					break;
+				}
+				 total_chunk += chunk_len;
+				 cur_data_off += chunk_len;
+				 cur_line=read_buf.pop();
+				 /* No newline? */
+				 if(null==cur_line)
+				 {
+					 if(more)
+						 return 1;
+					 res.setWarn(res.getWarn()|Global.WARN_PARTIAL);
+					 
+				 }
+			      /* All right, so that was the last, complete 0-size chunk?
+		         Exit the loop if so. */
+				 if(chunk_len==0)
+					 break;
+			}
+			 if (cur_data_off != data_len) 
+				 res.setWarn(res.getWarn()|Global.WARN_PARTIAL);
+		}
 		
 		
 		
 		return -1;
 	}
+	
+	
+	
+	
+
+	/* Performs a deep free(), unlinking of struct queue_entry, and the
+	   underlying request / response pair. */
+		
+	private void destroyUnlinkQueue(QueueEntry q,boolean keep)
+	{
+		if(!keep)
+		{
+			//Nothing do
+		}
+		if(null==q.prev)
+			Global.queue=q.next;
+		else
+			q.prev.next=q.next;
+		if(null!=q.next)
+			q.next.prev=q.prev;
+		Global.queue_cur--;
+
+	}
+	/* Performs a deep free(), unlinking, network shutdown for struct
+	   ConnEntry, as well as the underlying queue entry, request
+	   and response structs. */
+	private void destroyUnlinkConn(ConnEntry c,boolean keep)
+	{
+		if(null!=c.q)
+			destroyUnlinkQueue(c.q,keep);
+		if(null==c.prev)
+			Global.conn=c.next;
+		else
+			c.prev.next=c.next;
+		if(null!=c.next)
+			c.next.prev=c.prev;
+		try
+		{
+			c.socket.close();
+		} catch (IOException e)
+		{
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		Global.conn_cur--;
+	}
+	
+	/* Performs struct conn_entry for reuse following a clean shutdown. */
+	private void reuseConn(ConnEntry c,boolean keep)
+	{
+		if(null!=c.q)
+			destroyUnlinkQueue(c.q,keep);
+		c.q=null;
+		c.read_buf=null;
+		c.write_buf=null;
+		c.read_len=c.write_len=c.write_off=0;
+	}
+	
 	
 	
 	public void asyncRequest(HttpRequest req)
@@ -1166,46 +1338,137 @@ public class HttpClient
 			for(int i=0;i<Global.conn_count;i++)
 			{
 				ConnEntry next=c.next;
-				
-				try
+				if(c.q!=null)
 				{
-					//得到读写流
-					OutputStream os=c.socket.getOutputStream();
-					PrintWriter pw=new PrintWriter(os);
-					pw.write(c.write_buf);
-					pw.flush();
-					c.q.res.setState(Global.STATE_SEND);
-					c.last_rw=System.currentTimeMillis();
-					c.socket.shutdownOutput();
-					//输入流
-					InputStream is=c.socket.getInputStream();
-					//接收服务器的相应  
-					BufferedReader br=new BufferedReader(new InputStreamReader(is));
-					
-					String line=null;
-					int resLenth=0;
-					while((line=br.readLine())!=null)
+					try
 					{
-						c.read_buf.add(line);
-						resLenth+=line.length();
+						//得到读写流
+						OutputStream os=c.socket.getOutputStream();
+						PrintWriter pw=new PrintWriter(os);
+						pw.write(c.write_buf);
+						pw.flush();
+						c.q.res.setState(Global.STATE_SEND);
+						c.last_rw=System.currentTimeMillis();
+						c.socket.shutdownOutput();
+						//输入流
+						InputStream is=c.socket.getInputStream();
+						//接收服务器的相应  
+						BufferedReader br=new BufferedReader(new InputStreamReader(is));
+						
+						String line=null;
+						int resLenth=0;
+						while((line=br.readLine())!=null)
+						{
+							c.read_buf.add(line);
+							resLenth+=line.length();
+						}
+						c.read_len=resLenth;
+						
+						
+						int p_ret=parseResponse(c.q.req,c.q.res,c.read_buf,c.read_len,(c.read_len>(Global.SIZE_LIMIT+Global.READ_CHUNK)?false:true));
+						if(p_ret==0||p_ret==3)
+						{
+							boolean keep;
+							keep=c.q.req.getCall().call(c.q.req, c.q.res);
+				            /* If we got all data without hitting the limit, and if
+				               "Connection: close" is not indicated, we might want
+				               to keep the connection for future use. */
+							if(c.read_len>(Global.SIZE_LIMIT+Global.READ_CHUNK)||p_ret==3)
+							{
+								destroyUnlinkConn(c, keep);
+							}
+							else
+								reuseConn(c,keep);
+							if(Global.req_errors_cur<=Global.MAX_FAIL)
+								Global.req_errors_cur=0;
+							
+						}
+						else if(p_ret==2)
+						{
+							c.q.res.setState(Global.STATE_RESPERR);
+							destroyUnlinkConn(c, c.q.req.getCall().call(c.q.req, c.q.res));
+							Global.req_errors_cur++;
+							Global.req_errors_http++;
+						}
+						else
+						{
+							c.last_rw=System.currentTimeMillis();
+							c.q.res.setState(Global.STATE_RECEIVE);
+						}
+						
+						
+						
+						
+					} catch (IOException e)
+					{
+						// TODO Auto-generated catch block
+						e.printStackTrace();
 					}
-					c.read_len=resLenth;
-					
-					
-					int P_ret=parseResponse(c.q.req,c.q.res,c.read_buf,c.read_len,(c.read_len>(Global.SIZE_LIMIT+Global.READ_CHUNK)?false:true));
-					
-					
-					
-					
-					
-				} catch (IOException e)
-				{
-					// TODO Auto-generated catch block
-					e.printStackTrace();
 				}
+				else
+				{
+					destroyUnlinkConn(c, false);
+				}
+				c=next;
 			}
 		}
-		return 0;
+		 /* OK, connection-handling affairs taken care of! Next, let's go through all
+	     queue entries NOT currently associated with a connection, and try to
+	     pair them up with something. */
+		if(Global.queue_cur>0)
+		{
+			QueueEntry q=Global.queue;
+			while(q!=null)
+			{
+				int to_host=0;
+				// enforce the max requests per seconds requirement
+				/***
+				 * 未处理
+				 * 
+				 * 
+				 * 
+				 */
+				QueueEntry next=q.next;
+				if(q.c==null)
+				{
+					ConnEntry c=Global.conn;
+					/* Let's try to find a matching, idle connection first. */
+					while(c!=null)
+					{
+						ConnEntry cnext=c.next;
+						if(c.addr.equals(q.req.getAddr())&&(++to_host>0)&&
+								c.port==q.req.getPort()&&
+								c.proto==q.req.getProto()&&
+								c.q!=null)
+						{
+							connAssociate(c, q);
+							q=next;
+							break;
+						}
+						c=cnext;
+					}
+			        /* No match. If we are out of slots, request some other idle
+			           connection to be nuked soon. */
+					if(to_host<Global.MAX_CONN_HOST&&Global.conn_cur<Global.MAX_CONNECTIONS)
+					{
+						connAssociate(null, q);
+						q=next;
+					}
+					else
+					{
+						
+					}
+					
+				}
+				q=next;
+				
+				
+			}
+		}
+		
+		
+		
+		return Global.queue_cur;
 	}
 	
 	

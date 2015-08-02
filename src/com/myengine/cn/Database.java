@@ -233,12 +233,18 @@ public class Database
 			for(i=0;i<Global.root_pivot.child_cnt;i++)
 			{
 				cur=Global.root_pivot.child.get(i);
-				if(casePrefix(cur.req.getHost(),req.getHost()))
+				if(casePrefix(cur.req.getHost(),req.getHost())
+						&&cur.req.getPort()==req.getPort()
+						&&cur.req.getProto()==req.getProto())
 				{
-					
+					break;
 				}
 			}
-			
+			if(i==Global.root_pivot.child_cnt)
+			{
+				cur=new PivotDesc();
+				
+			}
 			
 		}
 	

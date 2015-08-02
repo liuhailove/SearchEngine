@@ -5,10 +5,10 @@ import java.util.List;
 
 public class ParamArray implements Cloneable
 {
-	List<Byte> t=new ArrayList<Byte>();			/* Type  */
-	List<String> n=new ArrayList<String>();		    /* Name  */
-	List<String> v=new ArrayList<String>();			/* Value */			
-	int   c=0;			/* Count */
+	public List<Integer> t=new ArrayList<Integer>();			/* Type  */
+	public List<String> n=new ArrayList<String>();		    /* Name  */
+	public List<String> v=new ArrayList<String>();			/* Value */			
+	public int   c=0;			/* Count */
 	@Override
 	public Object clone() throws CloneNotSupportedException
 	{

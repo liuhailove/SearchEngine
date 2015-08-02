@@ -2,8 +2,8 @@ package com.myengine.cn;
 
 public class HttpResponse
 {
-	private long state;			/* HTTP convo state (STATE_*)   */
-	private long code;			/* HTTP response code           */
+	private int state;			/* HTTP convo state (STATE_*)   */
+	private int code;			/* HTTP response code           */
 	private String msg;			/* HTTP response message        */
 	private long warn;			 /* Warning flags                */
 	private boolean cookies_set;/* Sets cookies?                */
@@ -27,19 +27,19 @@ public class HttpResponse
 	byte json_safe;				/* 0 - no, 1 - yes              */
 	byte stuff_checked;			/* check_stuff() called?        */
 	byte scraped;				/* scrape_response() called?    */
-	public long getState()
+	public int getState()
 	{
 		return state;
 	}
-	public void setState(long state)
+	public void setState(int state)
 	{
 		this.state = state;
 	}
-	public long getCode()
+	public int getCode()
 	{
 		return code;
 	}
-	public void setCode(long code)
+	public void setCode(int code)
 	{
 		this.code = code;
 	}

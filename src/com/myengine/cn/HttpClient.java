@@ -1,13 +1,33 @@
 package com.myengine.cn;
+import static tools.Common.getValue;
+import static tools.Common.newXssTag;
+import static tools.Common.registerXssTag;
+import static tools.Common.setValue;
+import static tools.Tools.DEBUG;
+import static tools.Tools.FATAL;
+import static tools.Tools.getFixedLenghtStr;
 import static tools.Tools.strChr;
 import static tools.Tools.strCspn;
 import static tools.Tools.strPos;
 import static tools.Tools.strSpn;
-import static tools.Tools.getFixedLenghtStr;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.PrintWriter;
+import java.net.InetAddress;
+import java.net.Socket;
 import java.net.URLDecoder;
+import java.net.URLEncoder;
+import java.net.UnknownHostException;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Random;
+import java.util.regex.Pattern;
 
 import tools.PARAMS;
-
 public class HttpClient
 {
 
@@ -277,7 +297,7 @@ public class HttpClient
 					}
 					for(i=last_p;i<req.getPar().c;i++)
 					{
-						req.getPar().t.set(i, (byte)PARAMS.PARAM_NONE);
+						req.getPar().t.set(i, PARAMS.PARAM_NONE);
 					}
 					cur=cur.substring(2+add);
 					know_dir=true;
@@ -345,11 +365,11 @@ public class HttpClient
 			}
 		    switch (cur.charAt(0)) {
 
-		      case ';': setValue((byte)PARAMS.PARAM_QUERY_S, name, value, -1, req.getPar()); break;
-		      case ',': setValue((byte)PARAMS.PARAM_QUERY_C, name, value, -1, req.getPar()); break;
-		      case '!': setValue((byte)PARAMS.PARAM_QUERY_E, name, value, -1, req.getPar()); break;
-		      case '$': setValue((byte)PARAMS.PARAM_QUERY_D, name, value, -1, req.getPar()); break;
-		      default: setValue((byte)PARAMS.PARAM_QUERY, name, value, -1, req.getPar());
+		      case ';': setValue(PARAMS.PARAM_QUERY_S, name, value, -1, req.getPar()); break;
+		      case ',': setValue(PARAMS.PARAM_QUERY_C, name, value, -1, req.getPar()); break;
+		      case '!': setValue(PARAMS.PARAM_QUERY_E, name, value, -1, req.getPar()); break;
+		      case '$': setValue(PARAMS.PARAM_QUERY_D, name, value, -1, req.getPar()); break;
+		      default: setValue(PARAMS.PARAM_QUERY, name, value, -1, req.getPar());
 
 		    }
 		    if(cur.length()>next_seg)
@@ -360,52 +380,838 @@ public class HttpClient
 		
 		
 	}
-	/* Inserts or overwrites parameter value in param_array. If offset
-	   == -1, will append parameter to list. Duplicates strings,
-	   name and val can be NULL. */
-	void setValue(byte type,String name,String val,long offset,ParamArray par)
+
+	/* Reconstructs URI from httpRequest data. Includes protocol and host
+	   if with_host is non-zero. */
+	String serializePath(HttpRequest req,boolean with_host,boolean with_post)
 	{
-		int i,coff=0,matched=-1;
-		/* If offset specified, try to find an entry to replace. */
-		if(offset>=0)
+		int i,cur_pos;
+		boolean got_search=false;
+		StringBuilder ret=new StringBuilder();
+		if(with_host)
 		{
-			for(i=0;i<par.c;i++)
+			ret.append("http");
+			if(req.getProto()==PROTO.PROTO_HTTPS)
+				ret.append("s");
+			ret.append("://");
+			ret.append(req.getHost());
+			if((req.getProto()==PROTO.PROTO_HTTP&&req.getPort()!=80)||
+				(req.getProto()==PROTO.PROTO_HTTPS&&req.getPort()!=443))
 			{
-				if(type!=par.t.get(i))
-					continue;
-				if(null!=name&&(null!=par.n||!name.equalsIgnoreCase(par.n.get(i))))
-					continue;
-				if(offset!=coff)
-				{
-					coff++;
-					continue;
-				}
-			    matched = i;
-				break;
+				ret.append(":"+req.getPort());
 			}
 		}
-		if(matched==-1)
+		
+		/* First print path... */
+		for(i=0;i<req.getPar().c;i++)
 		{
-			 /* No offset or no match - append to the end of list. */
-			par.t.add( par.c, type);
-			par.n.add(par.c, name);
-			par.v.add(par.c, val);
-			par.c++;
+			String enc=ENC.ENC_PATH;
+			if(null!=req.getPivot()&&null!=req.getFuzz_par_enc()&&i==req.getPivot().fuzz_par)
+			{
+				enc=req.getFuzz_par_enc();
+			}
+			if(PARAMS.PATH_SUBTYPE(req.getPar().t.get(i)))
+			{
+				switch(req.getPar().t.get(i))
+				{
+			       case PARAMS.PARAM_PATH_S: ret.append(";"); break;
+			       case PARAMS.PARAM_PATH_C: ret.append(","); break;
+			       case PARAMS.PARAM_PATH_E: ret.append("!"); break;
+			       case PARAMS.PARAM_PATH_D: ret.append("$"); break;
+			       default: ret.append("/");
+				}
+				if(req.getPar().n.get(i)!=null)
+				{
+					String str=URLEncoder.encode(req.getPar().n.get(i));
+					ret.append(str);
+					ret.append("=");
+				}
+				if(req.getPar().v.get(i)!=null)
+				{
+					String str=URLEncoder.encode(req.getPar().v.get(i));
+					ret.append(str);
+				}
+				
+			}
+
+		}
+		/* Then actual parameters. */
+		for(i=0;i<req.getPar().c;i++)
+		{
+			String enc=ENC.ENC_DEFAULT;
+			if(null!=req.getPivot()&&null!=req.getFuzz_par_enc()&&i==req.getPivot().fuzz_par)
+				enc=req.getFuzz_par_enc();
+			if(PARAMS.QUERY_SUBTYPE(req.getPar().t.get(i)))
+			{
+				if(!got_search)
+				{
+					ret.append("?");
+					got_search=true;
+				}
+				else
+				{
+					switch(req.getPar().t.get(i))
+					{
+					    case PARAMS.PARAM_QUERY_S: ret.append(";"); break;
+				        case PARAMS.PARAM_QUERY_C: ret.append(","); break;
+				        case PARAMS.PARAM_QUERY_E: ret.append("!"); break;
+				        case PARAMS.PARAM_QUERY_D: ret.append("$"); break;
+				        default: ret.append("&");
+					}
+				}
+				if(req.getPar().n.get(i)!=null)
+				{
+					String str=URLEncoder.encode(req.getPar().n.get(i));
+					ret.append(str);
+					ret.append("=");
+				}
+				if(req.getPar().v.get(i)!=null)
+				{
+					String str=URLEncoder.encode(req.getPar().v.get(i));
+					ret.append(str);
+				}
+				
+			}
+				
+				
+		}
+		got_search=false;
+		if(with_post)
+		{
+			for(i=0;i<req.getPar().c;i++)
+			{
+				String enc=ENC.ENC_DEFAULT;
+				if(req.getPivot()!=null&&req.getFuzz_par_enc()!=null&&i==req.getPivot().fuzz_par)
+					enc=req.getFuzz_par_enc();
+				if(PARAMS.POST_SUBTYPE(req.getPar().t.get(i)))
+				{
+					if(!got_search)
+					{
+						ret.append(" DATA:");
+						got_search=true;
+						
+					}
+					else
+						ret.append("&");
+					if(null!=req.getPar().n.get(i))
+					{
+						String str=URLEncoder.encode(req.getPar().n.get(i));
+						ret.append(str);
+						ret.append("=");
+					}
+					if(null!=req.getPar().v.get(i))
+					{
+						String str=URLEncoder.encode(req.getPar().v.get(i));
+						ret.append(str);
+					}
+				}
+			}
+		}
+		String result=ret.toString();
+		result=result.trim();
+		return result;
+	}
+	/**
+	 * 
+	 * @param str IP
+	 * @return true if IP is legal or false if IP illeagal
+	 */
+    private boolean checkIP(String str) 
+    {
+        Pattern pattern = Pattern
+                .compile("^((\\d|[1-9]\\d|1\\d\\d|2[0-4]\\d|25[0-5]"
+                        + "|[*])\\.){3}(\\d|[1-9]\\d|1\\d\\d|2[0-4]\\d|25[0-5]|[*])$");
+        return pattern.matcher(str).matches();
+    }
+
+	/* Looks up IP for a particular host, returns data in network order.
+	   Uses standard resolver, so it is slow and blocking, but we only
+	   expect to call it a couple of times during a typical assessment.
+	   There are some good async DNS libraries to consider in the long run. */
+	private String mayLookupHost(String host)
+	{
+		if(null==host||host.length()==0)
+			return null;
+		DnsEntry d=Global.dns,prev=null;
+		String ret_addr=null;
+		while(null!=d)
+		{
+			if(d.name.equalsIgnoreCase(host))
+				return d.addr;
+			prev=d;
+			d=d.next;
+		}
+		try
+		{
 			
+			if(host.equals("localhost"))
+			{
+				 ret_addr= InetAddress.getLocalHost().getHostAddress();
+			}
+			else if(checkIP(host))
+			{
+				/*if host is a standard ip,return directly*/
+				ret_addr= host;
+			}
+			else 
+			{
+				InetAddress[] hosts=InetAddress.getAllByName(host);
+				boolean search=false;
+				for(int i=0;i<hosts.length;i++)
+				{
+					d=Global.dns;
+					while(null!=d)
+					{
+						if(hosts[i].getHostAddress().equals(d.addr))
+						{
+							search=true;
+							ret_addr=d.addr;
+							
+						}
+						d=d.next;
+							
+					}
+					//System.out.println(hosts[i].getHostAddress());
+				}
+				if(search!=true)
+				{
+					ret_addr= hosts[0].getHostAddress();
+				}
+				if(null==prev)
+					d=Global.dns=new DnsEntry();
+				else
+					d=prev.next=new DnsEntry();
+				d.name=host;
+				d.addr=ret_addr;
+					
+			}
+
+		} catch (UnknownHostException e)
+		{
+			
+			e.printStackTrace();
+			ret_addr= null;
+		}
+		return ret_addr;
+
+		
+	}
+	/* Creates an ad hoc DNS cache entry, to override NS lookups. */
+	void fakeHost(String name,String addr)
+	{
+		DnsEntry d=Global.dns,prev=Global.dns;
+		while((null!=d)&&(null!=d.next))
+		{
+			prev=d;
+			d=d.next;
+		}
+		if(null==Global.dns)
+		{
+			d=Global.dns=new DnsEntry();
 		}
 		else
 		{
-			 /* Matched - replace name & value. */
-			par.n.set(matched, name);
-			par.v.set(matched, val);
+			d=prev.next=new DnsEntry();
+		}
+		d.name=name;
+		d.addr=addr;
+	}
+	
+
+	String GET_CK(String name,ParamArray par)
+	{
+		return getValue(PARAMS.PARAM_COOKIE,name,0,par);
+	}
+	void SET_CK(String name,String val,ParamArray par)
+	{
+		setValue(PARAMS.PARAM_COOKIE,name,val,0,par);
+		
+	}
+	String GET_PAR(String name,ParamArray par)
+	{
+		return getValue(PARAMS.PARAM_QUERY,name,0,par);
+	}
+	void SET_PAR(String name,String val,ParamArray par)
+	{
+		setValue(PARAMS.PARAM_QUERY,name,val,-1,par);
+		
+	}
+	String GET_HDR(String name,ParamArray par)
+	{
+		return getValue(PARAMS.PARAM_HEADER,name,0,par);
+	}
+	void SET_HDR(String name,String val,ParamArray par)
+	{
+		setValue(PARAMS.PARAM_HEADER,name,val,0,par);
+		
+	}
+	String GET_HDR_OFF(String name,ParamArray par,int offset)
+	{
+		return getValue(PARAMS.PARAM_HEADER,name,offset,par);
+	}
+	/* Prepares a serialized HTTP buffer to be sent over the network. */
+	String buildRequestData(HttpRequest req)
+	{
+		if(null==req)
+		{
+			FATAL("HttpRequest is NULL");
+		}
+		StringBuilder ret_buf,ck_buf,pay_buf,path;
+		int req_type=PARAMS.PARAM_NONE;
+		if(req.getProto()==PROTO.PROTO_NONE)
+		{
+			FATAL("uninitialized HttpRequest");
+		}
+		path=new StringBuilder(serializePath(req,false,false));
+		ret_buf=new StringBuilder();
+		if(req.getMethod()!=null)
+		{
+			ret_buf.append(req.getMethod());
+		}
+		else
+		{
+			ret_buf.append("GET");
+		}
+		ret_buf.append(" ");
+		ret_buf.append(path);
+		ret_buf.append(" HTTP/1.1\r\n");
+		ret_buf.append("Host: ");
+		ret_buf.append(req.getHost());
+		if((req.getProto()==PROTO.PROTO_HTTP&&req.getPort()!=80)||
+			(req.getProto()==PROTO.PROTO_HTTPS&&req.getPort()!=443))
+		{
+			ret_buf.append(":").append(req.getPort());
+		}
+		ret_buf.append("\r\n");
+		/* Insert generic browser headers first. */
+		if(Global.browserType==BROWSER.BROWSER_FAST)
+		{
+			ret_buf.append("Accept-Encoding: gzip\r\n");
+			ret_buf.append("Connection: keep-alive\r\n");
+			if(null!=GET_HDR("User-Agent",req.getPar()))
+			{
+				ret_buf.append("User-Agent: Mozilla/5.0 SF/").append(Global.VERSION).append("\r\n");
+		
+			}
+		    /* Some servers will reject to gzip responses unless "Mozilla/..."
+		       is seen in User-Agent. Bleh. */	
+		}
+		else if(Global.browserType==BROWSER.BROWSER_FFOX)
+		{
+			if(null!=GET_HDR("User-Agent",req.getPar()))
+			{
+				ret_buf.append("User-Agent: Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; ")
+				.append("rv:1.9.1.2) Gecko/20090729 Firefox/3.5.2 SF/")
+				.append(Global.VERSION)
+				.append("\r\n");
+				ret_buf.append("Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;")
+				.append("q=0.8\r\n");
+				
+			}
+			if(null!=GET_HDR("Accept-Language",req.getPar()))
+			{
+				ret_buf.append("Accept-Language: en-us,en\r\n");
+			}
+			ret_buf.append("Accept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.7\r\n");
+			ret_buf.append("Keep-Alive: 300\r\n");
+			ret_buf.append("Connection: keep-alive\r\n");
+			
+		}
+		else if(Global.browserType==BROWSER.BROWSER_MSIE)
+		{
+			ret_buf.append("Accept: */*\r\n");
+			if(null!=GET_HDR("Accept-Language",req.getPar()))
+			{
+				ret_buf.append("Accept-Language: en,en-US;q=0.5\r\n");
+				
+			}
+			if(null!=GET_HDR("User-Agent",req.getPar()))
+			{
+				ret_buf.append("User-Agent: Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.1; ")
+				.append("Trident/4.0; .NET CLR 1.1.4322; InfoPath.1; .NET CLR ").
+				append("2.0.50727; .NET CLR 3.0.4506.2152; .NET CLR 3.5.30729; SF/")
+				.append(Global.VERSION)
+				.append(")\r\n");
+			}
+			ret_buf.append("Accept-Encoding: gzip, deflate\r\n");
+			ret_buf.append("Connection: Keep-Alive\r\n");
+		}
+		else /* iPhone */
+		{
+			if(null!=GET_HDR("User-Agent",req.getPar()))
+			{
+				ret_buf.append("User-Agent: Mozilla/5.0 (iPhone; U; CPU iPhone OS 4_1 like Mac OS ")
+				.append("X; en-us) AppleWebKit/532.9 (KHTML, like Gecko) Version/4.0.5 ")
+				.append("Mobile/8B117 Safari/6531.22.7 SF/")
+				.append(Global.VERSION)
+				.append("\r\n");
+				
+			}
+			ret_buf.append("Accept: application/xml,application/xhtml+xml,text/html;q=0.9,")
+			.append("text/plain;q=0.8,image/png,*/*;q=0.5\r\n");
+			if(null!=GET_HDR("Accept-Language",req.getPar()))
+			{
+				ret_buf.append("Accept-Language: en-us\r\n");
+			}
+			ret_buf.append("Accept-Encoding: gzip, deflate\r\n");
+			ret_buf.append("Connection: keep-alive\r\n");
+		}
+		 /* Request a limited range up front to minimize unwanted traffic.
+	     Note that some Oracle servers apparently fail on certain ranged
+	     requests, so allowing -H override seems like a good idea. */
+		if(null!=GET_HDR("Range",Global.global_http_par))
+		{
+			ret_buf.append("Range: bytes=0-")
+			.append(Global.SIZE_LIMIT-1)
+			.append("\r\n");
+		}
+		/* Include a dummy "Referer" header, to avoid certain XSRF checks. */
+		if(null!=GET_HDR("Referer",req.getPar()))
+		{
+			ret_buf.append("Referer: http");
+			if(req.getProto()==PROTO.PROTO_HTTPS)
+				ret_buf.append("s");
+			ret_buf.append("://");
+			ret_buf.append(req.getHost());
+			ret_buf.append("\r\n");
+		}
+		/* Take care of HTTP authentication next. */
+		if(Global.auth_type==AUTH.AUTH_BASIC)
+		{
+			//暂时未处理
+		}
+		/* Append any other requested headers and cookies. */
+		boolean ck_pos=false;
+		ck_buf=new StringBuilder();
+		for(int i=0;i<req.getPar().c;i++)
+		{
+			if(req.getPar().t.get(i)==PARAMS.PARAM_HEADER)
+			{
+				ck_buf.append(req.getPar().n.get(i));
+				ck_buf.append(": ");
+				ck_buf.append(req.getPar().v.get(i));
+				ck_buf.append("\r\n");
+			}
+			else if(req.getPar().t.get(i)==PARAMS.PARAM_COOKIE)
+			{
+				if(ck_pos)
+				{
+					ck_buf.append(";");
+				}
+				ck_pos=true;
+				ck_buf.append(req.getPar().n.get(i));
+				ck_buf.append("=");
+				ck_buf.append(req.getPar().v.get(i));
+				
+			}
+		}
+		/* Also include extra globals, if any (but avoid dupes). */
+		for(int i=0;i<req.getPar().c&&i<Global.global_http_par.c;i++)
+		{
+		
+				if(Global.global_http_par.t.get(i)==PARAMS.PARAM_HEADER&&
+						null==GET_HDR(Global.global_http_par.n.get(i),req.getPar()))
+				{
+					ck_buf.append(Global.global_http_par.n.get(i));
+					ck_buf.append(": ");
+					ck_buf.append(Global.global_http_par.v.get(i));
+					ck_buf.append("\r\n");
+				}
+				else if(Global.global_http_par.t.get(i)==PARAMS.PARAM_COOKIE&&
+						null==GET_CK(Global.global_http_par.n.get(i),req.getPar()))
+				{
+					if(ck_pos)
+					{
+						ck_buf.append(";");
+					}
+					ck_pos=true;
+					ck_buf.append(Global.global_http_par.n.get(i));
+					ck_buf.append("=");
+					ck_buf.append(Global.global_http_par.v.get(i));
+				}
+			
+		}
+		if(ck_pos)
+		{
+			ret_buf.append("Cookie: ");
+			ret_buf.append(ck_buf);
+			ret_buf.append("\r\n");
+		}
+		/* Now, let's serialize the payload, if necessary. */
+		for(int i=0;i<req.getPar().c;i++)
+		{
+			switch(req.getPar().t.get(i))
+			{
+				case PARAMS.PARAM_POST_F:
+				case PARAMS.PARAM_POST_O:
+					req_type=req.getPar().t.get(i);
+					break;
+				case PARAMS.PARAM_POST:
+					if(req_type==PARAMS.PARAM_NONE)
+						req_type=PARAMS.PARAM_POST;
+					break;	
+			}
+		}
+		pay_buf=new StringBuilder();
+		if(req_type==PARAMS.PARAM_POST)
+		{
+			/* The default case: application/x-www-form-urlencoded. */
+			for(int i=0;i<req.getPar().c;i++)
+			{
+				String enc=ENC.ENC_DEFAULT;
+				if(null!=req.getPivot()&&null!=req.getFuzz_par_enc()&&i==req.getPivot().fuzz_par)
+					enc=req.getFuzz_par_enc();
+				if(req.getPar().t.get(i)==PARAMS.PARAM_POST)
+				{
+					if(pay_buf.length()>0)
+					{
+						pay_buf.append("&");
+					}
+					
+					if(null!=req.getPar().n.get(i))
+					{
+						pay_buf.append(URLEncoder.encode(req.getPar().n.get(i)));
+						pay_buf.append("=");
+					}
+					if(null!=req.getPar().v.get(i))
+					{
+						pay_buf.append(URLEncoder.encode(req.getPar().v.get(i)));
+						
+					}
+				}
+			}
+			ret_buf.append("Content-Type: application/x-www-form-urlencoded\r\n");
+		}
+		else if(req_type==PARAMS.PARAM_POST_O)
+		{
+			/* Opaque, non-escaped data of some sort. */
+			for(int i=0;i<req.getPar().c;i++)
+			{
+				if(req.getPar().t.get(i)==PARAMS.PARAM_POST_O&&null!=req.getPar().v.get(i))
+				{
+					pay_buf.append(req.getPar().v.get(i));
+				}
+			}
+			ret_buf.append("Content-Type: text/plain\r\n");
+		}
+		else if(req_type==PARAMS.PARAM_POST_F)
+		{
+			/* MIME envelopes: multipart/form-data */
+			Random r=new Random();
+			String bound="sf"+r.nextInt(10000)+1;
+			for(int i=0;i<req.getPar().c;i++)
+			{
+				if(req.getPar().t.get(i)==PARAMS.PARAM_POST||req.getPar().t.get(i)==PARAMS.PARAM_POST_F)
+				{
+					pay_buf.append("--");
+					pay_buf.append(bound);
+					pay_buf.append("\r\n");
+					pay_buf.append("Content-Disposition: form-data; name=\"");
+					if(null!=req.getPar().n.get(i))
+					{
+						pay_buf.append(req.getPar().n.get(i));
+					}
+					if(req.getPar().t.get(i)==PARAMS.PARAM_POST_F)
+					{
+						String tmp="\"; filename=\"sfish"+r.nextInt(16)+1+Global.DUMMY_EXT+"\"\r\n"
+								+"Content-Type: "+Global.DUMMY_MIME+"\r\n\r\n";
+						pay_buf.append(pay_buf);
+						pay_buf.append(newXssTag(Global.DUMMY_FILE));
+						registerXssTag(req);
+						
+						
+					}
+					else
+					{
+						pay_buf.append("\"\r\n\r\n");
+						if(null!=req.getPar().v.get(i))
+						{
+							pay_buf.append(req.getPar().v.get(i));
+						}
+					}
+					pay_buf.append("--\r\n");
+				}
+			}
+			pay_buf.append("--");
+			pay_buf.append(bound);
+			pay_buf.append("\r\n");
+			ret_buf.append("Content-Type: multipart/form-data; boundary=");
+			ret_buf.append(bound);
+			ret_buf.append("\r\n");
+			
+		}
+		else if(req_type==0)
+			ret_buf.append("\r\n");
+		/* Finalize HTTP payload... */
+		for(int i=0;i<pay_buf.length();i++)
+		{
+			if(pay_buf.charAt(i)==0xff)
+				pay_buf.setCharAt(i, (char) 0x00);
+		}
+		String pay=pay_buf.toString().trim();
+		if(pay.length()>0)
+		{
+			ret_buf.append("Content-Length: "+pay.length()+"\r\n\r\n");
+			ret_buf.append(pay);
+		}
+		/* Phew! */
+		String ret=ret_buf.toString().trim();
+		
+		return ret;
+	}
+	
+	/* Builds response fingerprint data. These fingerprints are used to
+	   find "roughly comparable" pages based on their word length
+	   distributions (divided into FP_SIZE buckets). */
+	void fprintResponse(HttpResponse res)
+	{
+		int i,c_len=0;
+		boolean in_space=false;
+		res.getSig().code=res.getCode();
+		for(i=0;i<res.getPay_len();i++)
+		{
+			if(res.getPayload().charAt(i)<=0x20||strChr("<>\"'&:\\",res.getPayload().charAt(i)))
+			{
+				if(in_space==false)
+				{
+					in_space=true;
+					if(c_len>0&&++c_len<=Global.FP_MAX_LEN)
+					{
+						int val=res.getSig().data.charAt(c_len%Global.FP_MAX_LEN);
+						val++;
+						res.getSig().data.replace(res.getSig().data.charAt(c_len%Global.FP_MAX_LEN), (char) val);
+						
+					}
+					c_len=0;
+					
+				}
+				else
+					c_len=0;
+				if(res.getPayload().charAt(i)=='&')
+				{
+					do{i++;}
+					while(i<res.getPay_len()&&(Character.isDigit(res.getPayload().charAt(i))||strChr("#;",res.getPayload().charAt(i))));
+				}
+			}
+			else
+			{
+				if(in_space)
+				{
+					in_space=false;
+					if(c_len>0&&++c_len<=Global.FP_MAX_LEN)
+					{
+						int val=res.getSig().data.charAt(c_len%Global.FP_MAX_LEN);
+						val++;
+						res.getSig().data.replace(res.getSig().data.charAt(c_len%Global.FP_MAX_LEN), (char) val);
+						
+					}
+					c_len=0;
+				}
+				else
+				{
+					res.getSig().has_text=true;
+					c_len++;
+				}
+			}
+		}
+		if(c_len>0)
+		{
+			int val=res.getSig().data.charAt(c_len%Global.FP_MAX_LEN);
+			val++;
+			res.getSig().data.replace(res.getSig().data.charAt(c_len%Global.FP_MAX_LEN), (char) val);
+		}
+		
+	}
+	/* Parses a network buffer containing raw HTTP response received over the
+	   network ('more' == the socket is still available for reading). Returns 0
+	   if response parses OK, 1 if more data should be read from the socket,
+	   2 if the response seems invalid, 3 if response OK but connection must be
+	   closed. */
+	int parseResponse(HttpRequest req,HttpResponse res,LinkedList<String> read_buf,int data_len,boolean more)
+	{
+		String cur_line=null;
+		int pay_len=-1;
+		int cur_data_off=0,
+			total_chunk=0,
+			http_ver;
+		boolean chunked=false,compressed=false,must_close=false;
+		if(0!=res.getCode())
+		{
+			FATAL("struct HttpResponse reused! Original code "+res.getCode()+"'.");
+		}
+		/* First, let's do a superficial request completeness check. Be
+	     prepared for a premature end at any point. */
+		String line=read_buf.pop();
+		
+		
+		
+		
+		return -1;
+	}
+	
+	
+	public void asyncRequest(HttpRequest req)
+	{
+		QueueEntry qe=null;
+		HttpResponse res=null;
+		if(req.getProto()==PROTO.PROTO_NONE||(null==req.getCall()))
+			FATAL("uninitialized HttpRequest");
+		res=new HttpResponse();
+		req.setAddr(mayLookupHost(req.getHost()));
+	    /* Don't try to issue extra requests if max_fail
+	     consecutive failures exceeded; but still try to
+	     wrap up the (partial) scan. */
+		if(Global.req_errors_cur>Global.MAX_FAIL)
+		{
+			DEBUG("!!! Too many subsequent request failures!\n");
+			res.setState(Global.STATE_SUPPRESS);
+			req.getCall().call(req, res);
+			/*
+			 * 没处理
+			 * 
+			 * */
 			
 			
 		}
+		
+		
+		/* DNS errors mean instant fail. */
+		if(null==req.getAddr())
+		{
+			/*
+			 * 没处理
+			 * 
+			 * */
+		}
+		/* Enforce user limits. */
+		/**
+		 * 
+		 * 
+		 * 
+		 * 
+		 * 
+		 * 
+		 */
+		/* OK, looks like we're good to go. Insert the request
+	     into the the queue. */
+		
+		qe=Global.queue;
+		Global.queue=new QueueEntry();
+		Global.queue.req=req;
+		Global.queue.res=res;
+		Global.queue.next=qe;
+		if(Global.queue.next!=null)
+			Global.queue.next.prev=Global.queue;
+		
+		Global.queue_cur++;
+		Global.req_count++;
+
+		
 	}
-	/* Reconstructs URI from httpRequest data. Includes protocol and host
-	   if with_host is non-zero. */
+	
+
+	/* Associates a queue entry with an existing connection (if 'use_c' is
+	   non-NULL), or creates a new connection to host (if 'use_c' NULL). */
+	private void connAssociate(ConnEntry use_c,QueueEntry q)
+	{
+		ConnEntry c;
+		if(use_c!=null)
+		{
+			c=use_c;
+			c.reused=true;
+		}
+		else
+		{
+		    /* OK, we need to create a new connection list entry and connect
+		       it to a target host. */
+			c=new ConnEntry();
+			c.proto=q.req.getProto();
+			c.addr=q.req.getAddr();
+			c.port=q.req.getPort();
+			try
+			{
+				c.socket=new Socket(c.addr,c.port);
+			} catch (UnknownHostException e)
+			{
+				e.printStackTrace();
+			} catch (IOException e)
+			{
+				e.printStackTrace();
+			}
+			
+			/* Make it official. */
+			c.next=Global.conn;
+			Global.conn=c;
+			if(c.next!=null)
+				c.next.prev=c;
+			Global.conn_count++;
+		}
+		c.q=q;
+		q.c=c;
+		q.res.setState(Global.STATE_CONNECT);
+		c.req_start=c.last_rw=System.currentTimeMillis();
+		c.write_buf=buildRequestData(q.req);
+		c.write_len=c.write_buf.length();
+	}
+	/* Processes the queue. Returns the number of queue entries remaining,
+	   0 if none. Will do a blocking select() to wait for socket state changes
+	   (or timeouts) if no data available to process. This is the main
+	   routine for the scanning loop. */
+	public int nextFromQueue()
+	{
+		long cur_time=System.currentTimeMillis();
+		if(Global.conn_cur>0)
+		{
+			ConnEntry c=Global.conn;
+			for(int i=0;i<Global.conn_count;i++)
+			{
+				ConnEntry next=c.next;
+				
+				try
+				{
+					//得到读写流
+					OutputStream os=c.socket.getOutputStream();
+					PrintWriter pw=new PrintWriter(os);
+					pw.write(c.write_buf);
+					pw.flush();
+					c.q.res.setState(Global.STATE_SEND);
+					c.last_rw=System.currentTimeMillis();
+					c.socket.shutdownOutput();
+					//输入流
+					InputStream is=c.socket.getInputStream();
+					//接收服务器的相应  
+					BufferedReader br=new BufferedReader(new InputStreamReader(is));
+					
+					String line=null;
+					int resLenth=0;
+					while((line=br.readLine())!=null)
+					{
+						c.read_buf.add(line);
+						resLenth+=line.length();
+					}
+					c.read_len=resLenth;
+					
+					
+					int P_ret=parseResponse(c.q.req,c.q.res,c.read_buf,c.read_len,(c.read_len>(Global.SIZE_LIMIT+Global.READ_CHUNK)?false:true));
+					
+					
+					
+					
+					
+				} catch (IOException e)
+				{
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
+		}
+		return 0;
+	}
 	
 	
+	
+	
+
 	public static void main(String[] args)
 	{
 		String url="http://localhost:8080/T1/index.jsp?name=liuhg&password=liuhg";
@@ -414,7 +1220,14 @@ public class HttpClient
 		HttpClient hc=new HttpClient();
 		//System.out.println(hc.getFixedLenghtStr(url, 1, 4));
 		hc.parseUrl(url,req,ref);
+		hc.buildRequestData(req);
+		//System.out.println(hc.serializePath(req, true, false));
+		//System.out.println(hc.checkIP("127.0.0.100"));
+//		System.out.println(hc.mayLookupHost("www.baidu.com"));
+//		System.out.println(hc.mayLookupHost("www.baidu.com"));
 		//System.out.println(url.substring(0,4));
+//		StringBuilder sb=new StringBuilder();
+//		System.out.println(sb.length());
 
 	}
 	

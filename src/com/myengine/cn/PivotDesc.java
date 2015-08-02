@@ -12,7 +12,7 @@ public class PivotDesc
 	byte c_checked;                          /* csens check done?         */
 	String name;                            /* Directory / script name   */
 	HttpRequest req;                         /* Prototype HTTP request    */
-	String fuzz_par;                         /* Fuzz target parameter     */
+	int fuzz_par;                         /* Fuzz target parameter     */
 	List<String>try_list;                    /* Values to try             */
 	long try_cnt;                             /* Number of values to try   */
 	long try_cur;                              /* Last tested try list offs */

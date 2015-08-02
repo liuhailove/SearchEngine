@@ -29,6 +29,7 @@ public class HttpRequest
 	{
 		HttpRequest req=(HttpRequest)super.clone();
 		req.par=(ParamArray)par.clone();
+		req.same_sig=(HttpSig)same_sig.clone();
 		return req;
 	}
 

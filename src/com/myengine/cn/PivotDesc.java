@@ -1,5 +1,6 @@
 package com.myengine.cn;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class PivotDesc
@@ -17,7 +18,7 @@ public class PivotDesc
 	long try_cnt;                             /* Number of values to try   */
 	long try_cur;                              /* Last tested try list offs */
 	PivotDesc parent;                          /* Parent pivot, if any      */	
-	List<PivotDesc>child;                     /* List of children          */
+	List<PivotDesc>child =new ArrayList<PivotDesc>();                   /* List of children          */
 	long child_cnt;                           /* Number of children        */
 	long desc_cnt;                             /* Number of descendants     */
 	List<IssueDesc> issue;                      /* List of issues found      */

@@ -1,6 +1,6 @@
 package com.myengine.cn;
-import static tools.Tools.DEBUG;
-import static tools.Tools.FATAL;
+import static tools.Tools.*;
+import static tools.PARAMS.*;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -9,6 +9,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+
+import tools.PARAMS;
 
 
 public class Database
@@ -158,12 +160,103 @@ public class Database
 			
 		}
 	}
-
 	
+	
+	boolean urlAllowed(HttpRequest req)
+	{
+		return true;
+	}
+	/* Maps a parsed URL (in req) to the pivot tree, creating or modifying nodes
+	   as necessary, and scheduling them for crawl. This should be called only
+	   on requests that were *not* yet retrieved. */
+	public void maybeAddPivot(HttpRequest req,HttpResponse res,boolean via_link)
+	{
+		PivotDesc cur=null;
+		int i,par_cnt=0,path_cnt=0,last_val_cnt=0,pno;
+		boolean ends_with_slash=false;
+		String last_val=null;
+		if(req==null)
+		{
+			FATAL("Invalid request data.");
+		}
+		HttpClient hc=new HttpClient();
+		String url= hc.serializePath(req, true, true);
+		DEBUG("--- New pivot requested: "+url+" ("+via_link+")");
+		/* Initialize root pivot if not done already. */
+		if(Global.root_pivot==null)
+		{
+			Global.root_pivot=new PivotDesc();
+			Global.root_pivot.type=Global.PIVOT_ROOT;
+			Global.root_pivot.state=Global.PSTATE_DONE;
+			Global.root_pivot.linked=2;
+			Global.root_pivot.fuzz_par=-1;
+			Global.root_pivot.name="[root]";
+		}
+		if(false==urlAllowed(req))
+		{
+			Global.url_scope++;
+			return;
+		}
+		/* Count the number of path and query parameters in the request. */
+		for(i=0;i<req.getPar().c;i++)
+		{
+			if(PARAMS.QUERY_SUBTYPE(req.getPar().t.get(i))||PARAMS.POST_SUBTYPE(req.getPar().t.get(i)))
+				par_cnt++;
+			if(PARAMS.PATH_SUBTYPE(req.getPar().t.get(i)))
+			{
+				if(req.getPar().t.get(i)==PARAMS.PARAM_PATH
+						&&req.getPar().n.size()>i
+						&&req.getPar().v.size()>i
+						&&Character.isWhitespace(req.getPar().v.get(i).charAt(0))==false)
+				{
+					ends_with_slash=true;
+				}
+				else
+				{
+					ends_with_slash=false;
+				}
+				if(req.getPar().v.get(i)!=null)
+					last_val=req.getPar().v.get(i);
+				path_cnt++;
+				
+			}
+			 /* While we're at it, try to learn new keywords. */
+			if(PARAMS.PATH_SUBTYPE(req.getPar().t.get(i))||PARAMS.QUERY_SUBTYPE(req.getPar().t.get(i)))
+			{
+				if(req.getPar().n.get(i)!=null)
+				{
+					wordlistConfirmWord(req.getPar().n.get(i));
+				}
+				wordlistConfirmWord(req.getPar().v.get(i));
+			}
+			 /* Try to find pivot point for the host. */
+			for(i=0;i<Global.root_pivot.child_cnt;i++)
+			{
+				cur=Global.root_pivot.child.get(i);
+				if(casePrefix(cur.req.getHost(),req.getHost()))
+				{
+					
+				}
+			}
+			
+			
+		}
+	
+
+	}
+	
+	private void wordlistConfirmWord(String string)
+	{
+		// TODO Auto-generated method stub
+		
+	}
+
+
 	public static void main(String[] args)
 	{
 		Database db=new Database();
-		db.loadKeywords("dictionaries/complete.wl", true, 2);
+		//db.loadKeywords("dictionaries/complete.wl", true, 2);
+		System.out.println();
 	}
 	
 }

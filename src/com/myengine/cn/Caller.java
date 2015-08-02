@@ -7,7 +7,7 @@ public class Caller
 	{
 		this.caller=rc;
 	}
-	public String call(HttpRequest req,HttpResponse res)
+	public boolean call(HttpRequest req,HttpResponse res)
 	{
 		return this.caller.method(req, res);
 	}
